@@ -1,0 +1,132 @@
+use crate::ast::*;
+use lalrpop_util::ParseError;
+
+
+grammar<'err>(file: usize, errors: &'err mut Vec<ParseError<usize, Token<'input>, &'static str>>);
+
+match {
+    r"[a-zA-Z_][a-zA-Z0-9_]*",
+    r"[0-9]+",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
+    "=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "!",
+    ",",
+    "if",
+    "else",
+    "while",
+    "return",
+    "struct",
+    ";",
+    r#"\"[\w|\d|\s|\.|!]+\""#,
+    r"\s+" => {},
+    r"\/\/.*" => {}
+}
+
+pub Hexagn: Vec<TopLvl> = {
+    TopLvl*
+}
+
+TopLvl: TopLvl = {
+    <start: @L> <typ: TypeParser> <name: Ident> "(" <args: Comma<FuncArg>> ")" "{" <body: Stmt*> "}" <end: @R> => TopLvl::FuncDef(typ, name, args, body, gen_sourcespan!(file, start..end)),
+    <start: @L> "struct" <name: Ident> "{" <fields: Comma<FuncArg>> "}" <end: @R> => TopLvl::StructDef(name, fields, gen_sourcespan!(file, start..end)),
+    ! => gen_err!(errors, TopLvl::Err, <>.error)
+}
+
+FuncArg: (Type, String) = {
+    <typ: TypeParser> <name: Ident> => (typ, name)
+}
+
+Stmt: Stmt = {
+    <start: @L> <typ: TypeParser> <name: Ident> "=" <expr: Expr> ";" <end: @R> => Stmt::VarDecl(typ, name, Some(expr), gen_sourcespan!(file, start..end)),
+    <start: @L> <typ: TypeParser> <name: Ident> ";" <end: @R> => Stmt::VarDecl(typ, name, None, gen_sourcespan!(file, start..end)),
+    <start: @L> <name: Ident> "=" <expr: Expr> ";" <end: @R> => Stmt::Assign(name, expr, gen_sourcespan!(file, start..end)),
+    <start: @L> "if" "(" <cond: Expr> ")" "{" <body: Stmt*> "}" <end: @R> => Stmt::If(cond, body, None, gen_sourcespan!(file, start..end)),
+    <start: @L> "if" "(" <cond: Expr> ")" "{" <body: Stmt*> "}" "else" "{" <else_body: Stmt*> "}" <end: @R> => Stmt::If(cond, body, Some(else_body), gen_sourcespan!(file, start..end)),
+    <start: @L> "while" "(" <cond: Expr> ")" "{" <body: Stmt*> "}" <end: @R> => Stmt::While(cond, body, gen_sourcespan!(file, start..end)),
+    <start: @L> "return" <expr: Expr> ";" <end: @R> => Stmt::Return(Some(expr), gen_sourcespan!(file, start..end)),
+    <start: @L> "return" ";" <end: @R> => Stmt::Return(None, gen_sourcespan!(file, start..end)),
+    <start: @L> <name: Ident> "(" <args: Comma<Expr>> ")" ";" <end: @R> => Stmt::Call(name, args, gen_sourcespan!(file, start..end)),
+    ! => gen_err!(errors, Stmt::Err, <>.error)
+}
+
+TypeParser: Type = {
+    <start: @L> <ident: Ident> <end: @R> => Type::Named(ident.to_string(), gen_sourcespan!(file, start..end)),
+    <start: @L> <ident: Ident> "*" <end: @R> => Type::Ptr(Box::new(Type::Named(ident.to_string(), gen_sourcespan!(file, start..end))), gen_sourcespan!(file, start..end)),
+    <start: @L> <ident: Ident> "[" <size: Num> "]" <end: @R> => Type::Array(Box::new(Type::Named(ident.to_string(), gen_sourcespan!(file, start..end))), gen_sourcespan!(file, start..end)),
+}
+
+Term: Expr = {
+    <start: @L> <name: Ident> "(" <args: Comma<Expr>> ")" <end: @R> => Expr::Call(name, args, gen_sourcespan!(file, start..end)),
+    <start: @L> <name: Ident> <end: @R> => Expr::Ident(name, gen_sourcespan!(file, start..end)),
+    <start: @L> <num: Num> <end: @R> => Expr::Int(num, gen_sourcespan!(file, start..end)),
+    <start: @L> "[" <elems: Comma<Expr>> "]" <end: @R> => Expr::Array(elems, gen_sourcespan!(file, start..end)),
+    <start: @L> <name: Ident> "[" <index: Expr> "]" <end: @R> => Expr::Index(name, Box::new(index), gen_sourcespan!(file, start..end)),
+    <start: @L> <lit: StringLit> <end: @R> => Expr::String(lit, gen_sourcespan!(file, start..end)),
+    <start: @L> "(" <expr: Expr> ")" <end: @R> => expr,
+}
+
+Unary: Expr = {
+    <start: @L> <term: Term> <end: @R> => term,
+    <start: @L> "-" <term: Term> <end: @R> => Expr::Neg(Box::new(term), gen_sourcespan!(file, start..end)),
+    <start: @L> "!" <term: Term> <end: @R> => Expr::Not(Box::new(term), gen_sourcespan!(file, start..end)),
+}
+
+Mul: Expr = {
+    <start: @L> <unary: Unary> <end: @R> => unary,
+    <start: @L> <unary: Unary> "*" <mul: Mul> <end: @R> => Expr::BinOp(Box::new(unary), BinOp::Mul, Box::new(mul), gen_sourcespan!(file, start..end)),
+    <start: @L> <unary: Unary> "/" <mul: Mul> <end: @R> => Expr::BinOp(Box::new(unary), BinOp::Div, Box::new(mul), gen_sourcespan!(file, start..end)),
+    <start: @L> <unary: Unary> "%" <mul: Mul> <end: @R> => Expr::BinOp(Box::new(unary), BinOp::Mod, Box::new(mul), gen_sourcespan!(file, start..end)),
+}
+
+Add: Expr = {
+    <start: @L> <mul: Mul> <end: @R> => mul,
+    <start: @L> <mul: Mul> "+" <add: Add> <end: @R> => Expr::BinOp(Box::new(mul), BinOp::Add, Box::new(add), gen_sourcespan!(file, start..end)),
+    <start: @L> <mul: Mul> "-" <add: Add> <end: @R> => Expr::BinOp(Box::new(mul), BinOp::Sub, Box::new(add), gen_sourcespan!(file, start..end)),
+}
+
+Expr: Expr = {
+    <start: @L> <add: Add> <end: @R> => add,
+    <start: @L> <add: Add> "<" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Lt, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    <start: @L> <add: Add> ">" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Gt, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    <start: @L> <add: Add> "<=" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Leq, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    <start: @L> <add: Add> ">=" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Geq, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    <start: @L> <add: Add> "==" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Eq, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    <start: @L> <add: Add> "!=" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Neq, Box::new(cmp), gen_sourcespan!(file, start..end)),
+    ! => gen_err!(errors, Expr::Err, <>.error)
+}
+
+Ident: String = r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string();
+Num: i32 = r"[0-9]+" => <>.parse().unwrap();
+StringLit: String = {
+    r#"\"[\w|\d|\s|\.|!]+\""# => {
+        let mut s = <>.to_string();
+        s.remove(0);
+        s.pop();
+        s
+    }
+}
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
