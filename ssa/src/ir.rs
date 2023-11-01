@@ -26,15 +26,25 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn new(name: &str, ret_type: Type, args: Vec<(String, Type)>, linkage: Linkage, variables: Vec<Variable>) -> Self {
+    pub fn new(
+        name: &str,
+        ret_type: Type,
+        args: Vec<(String, Type)>,
+        linkage: Linkage,
+        variables: Vec<Variable>,
+    ) -> Self {
         Self {
             name: name.to_string(),
             ret_type,
             args,
             blocks: vec![],
             linkage,
-            variables: variables
+            variables: variables,
         }
+    }
+
+    pub fn push_block(&mut self, block: BasicBlock) {
+        self.blocks.push(block);
     }
 }
 
@@ -52,13 +62,15 @@ pub enum Type {
 pub struct BasicBlock {
     pub(crate) name: String,
     pub(crate) instructions: Vec<Instruction>,
-    pub(crate) terminator: Terminator
+    pub(crate) terminator: Terminator,
 }
 
 pub enum Terminator {
-    Return(Value),
+    Return(Variable),
     Jump(BlockId),
-    BranchCond(Value, BlockId, BlockId),
+    BranchCond(Variable, BlockId, BlockId),
+    Branch(Variable, BlockId, BlockId),
+    NoTerm
 }
 
 pub enum Linkage {
@@ -67,11 +79,60 @@ pub enum Linkage {
     External,
 }
 
-pub enum Instruction {}
+pub enum Instruction {
+    Integer(VariableId, i64),
+    BinOp(VariableId, BinOp, VariableId, VariableId),
+    Phi(VariableId, Vec<(VariableId, BlockId)>),
+}
 
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "add"),
+            BinOp::Sub => write!(f, "sub"),
+            BinOp::Mul => write!(f, "mul"),
+            BinOp::Div => write!(f, "div"),
+            BinOp::Mod => write!(f, "mod"),
+            BinOp::And => write!(f, "and"),
+            BinOp::Or => write!(f, "or"),
+            BinOp::Xor => write!(f, "xor"),
+            BinOp::Shl => write!(f, "shl"),
+            BinOp::Shr => write!(f, "shr"),
+            BinOp::Eq => write!(f, "eq"),
+            BinOp::Ne => write!(f, "ne"),
+            BinOp::Lt => write!(f, "lt"),
+            BinOp::Le => write!(f, "le"),
+            BinOp::Gt => write!(f, "gt"),
+            BinOp::Ge => write!(f, "ge"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockId(pub(crate) usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionId(pub(crate) usize);
-pub struct Value(pub(crate) usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VariableId(pub(crate) usize);
 
 impl Display for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,7 +156,7 @@ impl Display for Module {
 
 impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
+        writeln!(
             f,
             "fn {}({}) {} {{",
             self.name,
@@ -107,7 +168,11 @@ impl Display for Function {
             self.ret_type
         )?;
 
-        writeln!(f, "}}")?;
+        for block in &self.blocks {
+            write!(f, "{}", block)?;
+        }
+
+        write!(f, "}}")?;
         Ok(())
     }
 }
@@ -127,17 +192,41 @@ impl Display for Type {
 
 impl Display for BasicBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}:", self.name)?;
+        writeln!(f, "${}:", self.name)?;
         for instr in &self.instructions {
-            writeln!(f, "  {}", instr)?;
+            writeln!(f, "    {}", instr)?;
         }
+        writeln!(f, "    {}", self.terminator)?;
+        Ok(())
+    }
+}
 
+impl Display for Terminator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Terminator::Return(var) => write!(f, "ret %{}", var.name)?,
+            Terminator::Jump(block) => write!(f, "jmp ${}", block.0)?,
+            Terminator::BranchCond(var, block1, block2) => {
+                write!(f, "br %{}, ${}, ${}", var.name, block1.0, block2.0)?
+            }
+            Terminator::Branch(var, block1, block2) => {
+                write!(f, "br %{}, ${}, ${}", var.name, block1.0, block2.0)?
+            }
+            Terminator::NoTerm => write!(f, "noterm")?,
+        }
         Ok(())
     }
 }
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Integer(var, val) => writeln!(f, "%{} = {}", var.0, val)?,
+            Instruction::BinOp(var, op, lhs, rhs) => {
+                writeln!(f, "%{} = {} %{}, %{}", var.0, op, lhs.0, rhs.0)?
+            }
+            _ => (),
+        }
         Ok(())
     }
 }
