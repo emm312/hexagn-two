@@ -9,7 +9,7 @@ pub struct Module {
 impl Module {
     pub fn new(name: &str, functions: Vec<Function>) -> Module {
         Module {
-            functions: functions,
+            functions,
             name: name.to_string(),
             analysed: false,
         }
@@ -42,7 +42,7 @@ impl Function {
             args,
             blocks: vec![],
             linkage,
-            variables: variables,
+            variables,
             value_counter: 0,
             id,
         }

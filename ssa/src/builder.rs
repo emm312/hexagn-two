@@ -66,7 +66,10 @@ impl ModuleBuilder {
     pub fn build_binop(&mut self, op: BinOp, lhs: Value, rhs: Value) -> Value {
         let val = self.push_value();
         let block = self.get_block_mut(self.current_block.unwrap());
-        block.instructions.push(Instruction { yielded: Some(val), operation: Operation::BinOp(op, lhs, rhs) });
+        block.instructions.push(Instruction {
+            yielded: Some(val),
+            operation: Operation::BinOp(op, lhs, rhs),
+        });
         val
     }
 
