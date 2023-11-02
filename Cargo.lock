@@ -148,12 +148,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
 
 [[package]]
-name = "codegem"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ac5724e8f8bb1db961b4b9aaae5263119a18a8cc244a6c525784cd96b6a65cb"
-
-[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -273,10 +267,10 @@ name = "hexagn-two"
 version = "0.1.0"
 dependencies = [
  "clap",
- "codegem",
  "codespan-reporting",
  "lalrpop",
  "lalrpop-util",
+ "ssa",
 ]
 
 [[package]]
@@ -559,6 +553,11 @@ name = "smallvec"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "942b4a808e05215192e39f4ab80813e599068285906cc91aa64f923db842bd5a"
+
+[[package]]
+name = "ssa"
+version = "0.1.0"
+source = "git+https://github.com/emm312/ssa#3748419b3b635fced10c1684dcf69aa3adc3910c"
 
 [[package]]
 name = "string_cache"

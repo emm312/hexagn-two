@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
-codegem = "0.2.3"
+ssa = { git = "https://github.com/emm312/ssa" }
 codespan-reporting = "0.11.1"
 lalrpop-util = { version = "0.20.0", features = ["lexer"] }
 
