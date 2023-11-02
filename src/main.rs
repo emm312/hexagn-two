@@ -21,7 +21,7 @@ fn main() {
     let mut files = SimpleFiles::new();
     let code = std::fs::read_to_string(&args.input_file).unwrap();
     files.add(&args.input_file, &code);
-    let (ast, diags) = frontend::ast::parse(&code, 0);
+    let (ast, diags) = hexagn_two::ast::parse(&code, 0);
     println!("{:#?}", ast);
     print_diags(diags, files);
 }
