@@ -23,15 +23,18 @@ pub struct Function {
     pub(crate) blocks: Vec<BasicBlock>,
     pub(crate) linkage: Linkage,
     pub(crate) variables: Vec<Variable>,
+    pub(crate) id: usize,
+    pub(crate) value_counter: usize,
 }
 
 impl Function {
-    pub fn new(
+    pub(crate) fn new(
         name: &str,
         ret_type: Type,
         args: Vec<(String, Type)>,
         linkage: Linkage,
         variables: Vec<Variable>,
+        id: usize,
     ) -> Self {
         Self {
             name: name.to_string(),
@@ -40,6 +43,8 @@ impl Function {
             blocks: vec![],
             linkage,
             variables: variables,
+            value_counter: 0,
+            id,
         }
     }
 
@@ -70,7 +75,7 @@ pub enum Terminator {
     Jump(BlockId),
     BranchCond(Variable, BlockId, BlockId),
     Branch(Variable, BlockId, BlockId),
-    NoTerm
+    NoTerm,
 }
 
 pub enum Linkage {
@@ -79,10 +84,17 @@ pub enum Linkage {
     External,
 }
 
-pub enum Instruction {
-    Integer(VariableId, i64),
-    BinOp(VariableId, BinOp, VariableId, VariableId),
-    Phi(VariableId, Vec<(VariableId, BlockId)>),
+pub struct Instruction {
+    pub(crate) yielded: Option<Value>,
+    pub(crate) operation: Operation,
+}
+
+pub enum Operation {
+    Integer(i64),
+    BinOp(BinOp, Value, Value),
+    Call(FunctionId, Vec<Value>),
+    LoadVar(VariableId),
+    StoreVar(Value, VariableId),
 }
 
 pub enum BinOp {
@@ -133,6 +145,8 @@ pub struct BlockId(pub(crate) usize);
 pub struct FunctionId(pub(crate) usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VariableId(pub(crate) usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Value(pub(crate) usize);
 
 impl Display for Module {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -158,7 +172,8 @@ impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "fn {}({}) {} {{",
+            "${}: fn {}({}) {} {{",
+            self.id,
             self.name,
             self.args
                 .iter()
@@ -220,12 +235,35 @@ impl Display for Terminator {
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(val) = self.yielded {
+            write!(f, "{} = ", val)?;
+        }
+        write!(f, "{}", self.operation)
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "%{}", self.0)
+    }
+}
+
+impl Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Instruction::Integer(var, val) => writeln!(f, "%{} = {}", var.0, val)?,
-            Instruction::BinOp(var, op, lhs, rhs) => {
-                writeln!(f, "%{} = {} %{}, %{}", var.0, op, lhs.0, rhs.0)?
-            }
-            _ => (),
+            Operation::BinOp(op, lhs, rhs) => write!(f, "{} {} {}", op, lhs, rhs)?,
+            Operation::Call(func, args) => write!(
+                f,
+                "call ${}({})",
+                func.0,
+                args.iter()
+                    .map(|e| format!("{}", e))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )?,
+            Operation::LoadVar(var) => write!(f, "load %{}", var.0)?,
+            Operation::StoreVar(val, var) => write!(f, "store {} %{}", val, var.0)?,
+            Operation::Integer(val) => write!(f, "{}", val)?,
         }
         Ok(())
     }

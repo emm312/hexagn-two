@@ -1,4 +1,7 @@
-use ssa::{ir::{Function, Module, Type, Linkage}, builder::ModuleBuilder};
+use ssa::{
+    builder::ModuleBuilder,
+    ir::{Function, Linkage, Module, Type},
+};
 
 fn main() {
     let mut builder = ModuleBuilder::new("main");

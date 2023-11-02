@@ -1,4 +1,7 @@
-use crate::ir::{Module, Linkage, Type, Function, FunctionId, BlockId, BasicBlock, Terminator, BinOp, Variable, VariableId, Instruction};
+use crate::ir::{
+    BasicBlock, BinOp, BlockId, Function, FunctionId, Instruction, Linkage, Module, Operation,
+    Terminator, Type, Value, Variable, VariableId,
+};
 
 pub struct ModuleBuilder {
     module: Module,
@@ -9,9 +12,13 @@ pub struct ModuleBuilder {
 impl ModuleBuilder {
     pub fn new(name: &str) -> ModuleBuilder {
         ModuleBuilder {
-            module: Module { functions: vec![], name: name.to_string(), analysed: false },
+            module: Module {
+                functions: vec![],
+                name: name.to_string(),
+                analysed: false,
+            },
             current_block: None,
-            current_func: None
+            current_func: None,
         }
     }
 
@@ -19,24 +26,32 @@ impl ModuleBuilder {
         println!("{}", self.module);
     }
 
-    pub fn push_function(&mut self, name: &str, ret_type: Type, args: Vec<(String, Type)>, linkage: Option<Linkage>) -> FunctionId {
-        self.module.functions.push(Function {
-            name: name.to_string(),
+    pub fn push_function(
+        &mut self,
+        name: &str,
+        ret_type: Type,
+        args: Vec<(String, Type)>,
+        linkage: Option<Linkage>,
+    ) -> FunctionId {
+        self.module.functions.push(Function::new(
+            name,
             ret_type,
             args,
-            blocks: vec![],
-            linkage: linkage.unwrap_or(Linkage::Public),
-            variables: vec![],
-        });
+            linkage.unwrap_or(Linkage::Private),
+            vec![],
+            self.module.functions.len(),
+        ));
         FunctionId(self.module.functions.len() - 1)
     }
 
     pub fn push_block(&mut self, name: &str) -> BlockId {
-        self.module.functions[self.current_func.as_ref().unwrap().0].blocks.push(BasicBlock {
-            name: name.to_string(),
-            instructions: vec![],
-            terminator: Terminator::NoTerm,
-        });
+        self.module.functions[self.current_func.as_ref().unwrap().0]
+            .blocks
+            .push(BasicBlock {
+                name: name.to_string(),
+                instructions: vec![],
+                terminator: Terminator::NoTerm,
+            });
         BlockId(self.get_func(self.current_func.unwrap()).blocks.len() - 1)
     }
 
@@ -48,9 +63,11 @@ impl ModuleBuilder {
         self.current_block = Some(id);
     }
 
-    pub fn build_binop(&mut self, dst: VariableId, op: BinOp, lhs: VariableId, rhs: VariableId) {
+    pub fn build_binop(&mut self, op: BinOp, lhs: Value, rhs: Value) -> Value {
+        let val = self.push_value();
         let block = self.get_block_mut(self.current_block.unwrap());
-        block.instructions.push(Instruction::BinOp(dst, op, lhs, rhs));
+        block.instructions.push(Instruction { yielded: Some(val), operation: Operation::BinOp(op, lhs, rhs) });
+        val
     }
 
     fn get_func(&self, id: FunctionId) -> &Function {
@@ -78,8 +95,20 @@ impl ModuleBuilder {
         VariableId(func.variables.len() - 1)
     }
 
-    pub fn build_integer(&mut self, dst: VariableId, value: i64) {
+    pub fn build_integer(&mut self, value: i64) -> Value {
+        let val = self.push_value();
         let block = self.get_block_mut(self.current_block.unwrap());
-        block.instructions.push(Instruction::Integer(dst, value));
+        block.instructions.push(Instruction {
+            yielded: Some(val),
+            operation: Operation::Integer(value),
+        });
+        val
+    }
+
+    // internal function to init values
+    #[inline]
+    fn push_value(&mut self) -> Value {
+        self.get_func_mut(self.current_func.unwrap()).value_counter += 1;
+        Value(self.get_func(self.current_func.unwrap()).value_counter - 1)
     }
 }
