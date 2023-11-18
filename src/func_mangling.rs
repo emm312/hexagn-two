@@ -1,6 +1,6 @@
 use crate::ast::Type;
 
-pub fn mangle_function(name: &String, args: &Vec<(Type, String)>, ret_t: &Type) -> String {
+pub fn mangle_function(name: &String, args: &[(Type, String)], ret_t: &Type) -> String {
     format!(
         "_Hx{}{}{}{}",
         name.len(),

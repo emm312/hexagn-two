@@ -1,11 +1,8 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, fmt::Display};
 
 use codespan_reporting::diagnostic::{Diagnostic, Label, LabelStyle};
 
-use crate::{
-    ast::{BinOp, BuiltinType, Expr, Stmt, TopLvl, Type},
-    func_mangling,
-};
+use crate::ast::{BuiltinType, Expr, SourceSpan, Stmt, TopLvl, Type};
 
 pub fn typecheck(ast: &Vec<TopLvl>) -> Result<(), Diagnostic<usize>> {
     let mut typechecker = Typechecker::new();
@@ -13,7 +10,8 @@ pub fn typecheck(ast: &Vec<TopLvl>) -> Result<(), Diagnostic<usize>> {
 }
 
 struct Typechecker {
-    funcs: Vec<String>, // mangling of the function
+    // mangled name along with return and arg types
+    funcs: Vec<(String, Type, Vec<Type>)>,
     vars: HashMap<String, Type>,
 }
 
@@ -28,16 +26,16 @@ impl Typechecker {
     fn typecheck(&mut self, ast: &Vec<TopLvl>) -> Result<(), Diagnostic<usize>> {
         let mut bodies_to_check = Vec::new();
         for toplvl in ast {
-            match toplvl {
-                TopLvl::FuncDef(typ, name, args, body, _) => {
-                    self.funcs
-                        .push(func_mangling::mangle_function(name, args, typ));
-                    bodies_to_check.push((body, args, typ));
-                }
-                _ => (),
+            if let TopLvl::FuncDef(typ, name, args, body, _) = toplvl {
+                self.funcs.push((
+                    name.clone(),
+                    typ.clone(),
+                    args.iter().map(|(t, _)| t.clone()).collect(),
+                ));
+                bodies_to_check.push((body, args, typ));
             }
         }
-        for (body, args, ret_t) in bodies_to_check {
+        for (body, args, _) in bodies_to_check {
             self.vars = args.iter().fold(HashMap::new(), |mut acc, (typ, name)| {
                 acc.insert(name.clone(), typ.clone());
                 acc
@@ -47,8 +45,8 @@ impl Typechecker {
                     Stmt::VarDecl(typ, name, expr, span) => {
                         self.vars.insert(name.clone(), typ.clone());
                         if let Some(expr) = expr {
-                            let expr_t = self.infer_expr(expr.clone(), &Some(typ.clone()))?;
-                            if typ != &expr_t {
+                            let expr_t = self.infer_expr(expr.clone())?;
+                            if &expr_t != typ {
                                 return Err(Diagnostic::error()
                                     .with_message(format!("Type mismatch: {} and {}", typ, expr_t))
                                     .with_labels(vec![
@@ -67,29 +65,91 @@ impl Typechecker {
                         }
                     }
                     Stmt::Return(expr, _) => {
-                        if let Some(_) = expr {
-                            self.infer_expr(expr.as_ref().unwrap().clone(), &Some(ret_t.clone()))?;
+                        if expr.is_some() {
+                            self.infer_expr(expr.as_ref().unwrap().clone())?;
                         }
                     }
+                    Stmt::Call(name, args, span) => {
+                        let mut args_t = Vec::new();
+                        for arg in args {
+                            args_t.push(self.infer_expr(arg.clone())?)
+                        }
+                        let possible_funcs = self
+                            .funcs
+                            .iter()
+                            .filter(|(fname, _, _)| fname == name)
+                            .collect::<Vec<_>>();
+                        let func_ret = possible_funcs.iter().find_map(|(fname, ret, fargs)| {
+                            if fname == name && &args_t == fargs {
+                                Some(ret)
+                            } else {
+                                None
+                            }
+                        });
+
+                        match func_ret {
+                            Some(_) => return Ok(()),
+                            None => {
+                                return Err(Diagnostic::error()
+                                    .with_message("Invalid arguments to function")
+                                    .with_labels(vec![Label::new(
+                                        LabelStyle::Primary,
+                                        span.file,
+                                        span.span.clone(),
+                                    )
+                                    .with_message(format!("Function arguments have types {}", {
+                                        String::from("[")
+                                            + &args_t
+                                                .iter()
+                                                .map(|t| format!("{}", t))
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
+                                            + "]"
+                                    }))])
+                                    .with_notes(vec![format!(
+                                        "Possible argument types are {}",
+                                        possible_funcs
+                                            .iter()
+                                            .map(|(_, _, args)| String::from("[")
+                                                + &args
+                                                    .iter()
+                                                    .map(|t| format!("{}", t))
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                                + "]")
+                                            .collect::<Vec<_>>()
+                                            .join(" or ")
+                                    )]));
+                            }
+                        }
+                    }
+
                     _ => todo!(),
                 }
             }
         }
-        println!("{:#?}", self.funcs);
         Ok(())
     }
 
-    fn infer_expr(&self, expr: Expr, should_be: &Option<Type>) -> Result<Type, Diagnostic<usize>> {
+    fn infer_expr(&self, expr: Expr) -> Result<BaserBaseType, Diagnostic<usize>> {
         match expr {
             Expr::BinOp(lhs, _, rhs, _) => {
-                let lhs_t = self.infer_expr(*lhs.clone(), should_be)?;
-                let rhs_t = self.infer_expr(*rhs.clone(), should_be)?;
+                let lhs_t = self.infer_expr(*lhs.clone())?;
+                let rhs_t = self.infer_expr(*rhs.clone())?;
                 if lhs_t != rhs_t {
                     Err(Diagnostic::error()
                         .with_message(format!("Type mismatch: {} and {}", lhs_t, rhs_t))
                         .with_labels(vec![
-                            Label::new(LabelStyle::Secondary, lhs.clone().get_span().file, lhs.clone().get_span().span),
-                            Label::new(LabelStyle::Secondary, rhs.clone().get_span().file, rhs.clone().get_span().span),
+                            Label::new(
+                                LabelStyle::Secondary,
+                                lhs.clone().get_span().file,
+                                lhs.clone().get_span().span,
+                            ),
+                            Label::new(
+                                LabelStyle::Secondary,
+                                rhs.clone().get_span().file,
+                                rhs.clone().get_span().span,
+                            ),
                         ]))
                 } else {
                     Ok(lhs_t)
@@ -98,25 +158,94 @@ impl Typechecker {
             Expr::Array(exprs, span) => {
                 let mut typ = exprs
                     .iter()
-                    .map(|expr| self.infer_expr(expr.clone(), &None))
-                    .collect::<Result<Vec<Type>, Diagnostic<usize>>>()?;
+                    .map(|expr| self.infer_expr(expr.clone()))
+                    .collect::<Result<Vec<_>, Diagnostic<usize>>>()?;
                 typ.dedup();
                 if typ.len() == 1 {
-                    Ok(Type::Array(Box::new(typ.pop().unwrap()), exprs.len(), span))
+                    Ok(BaserBaseType::WhateverIsNotAConcreteType(
+                        BaseType::Array(Box::new(typ.pop().unwrap()), exprs.len()),
+                        span,
+                    ))
                 } else {
-                    Err(Diagnostic::error().with_message(format!("Type mismatch: {:?}", typ)))
+                    Err(Diagnostic::error().with_message(format!(
+                        "Type mismatch: {}",
+                        String::from("[")
+                            + &typ
+                                .iter()
+                                .map(|t| format!("{}", t))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                            + "]"
+                    )))
                 }
             }
-            Expr::Float(_, span) => Ok(Type::Builtin(BuiltinType::Float32, span)),
-            Expr::String(s, span) => Ok(Type::Array(
+            Expr::Float(_, span) => Ok(BaserBaseType::WhateverIsNotAConcreteType(
+                BaseType::Float,
+                span,
+            )),
+            Expr::String(s, span) => Ok(BaserBaseType::Concrete(Type::Array(
                 Box::new(Type::Builtin(BuiltinType::Uint8, span.clone())),
                 s.len(),
                 span,
-            )),
+            ))),
             Expr::Index(_, _, _span) => todo!("indexing"),
-            Expr::Call(_, _, _span) => todo!("func calls"),
+            Expr::Call(name, args, span) => {
+                let mut args_t = Vec::new();
+                for arg in args {
+                    args_t.push(self.infer_expr(arg)?)
+                }
+                let possible_funcs = self
+                    .funcs
+                    .iter()
+                    .filter(|(fname, _, _)| fname == &name)
+                    .collect::<Vec<_>>();
+                let func_ret = possible_funcs.iter().find_map(|(fname, ret, fargs)| {
+                    if fname == &name && &args_t == fargs {
+                        Some(ret)
+                    } else {
+                        None
+                    }
+                });
+
+                match func_ret {
+                    Some(typ) => Ok(BaserBaseType::Concrete(typ.clone())),
+                    None => Err(Diagnostic::error()
+                        .with_message("Invalid arguments to function")
+                        .with_labels(vec![Label::new(
+                            LabelStyle::Primary,
+                            span.file,
+                            span.span.clone(),
+                        )
+                        .with_message(format!(
+                            "Function arguments have types {}",
+                            {
+                                String::from("[")
+                                    + &args_t
+                                        .iter()
+                                        .map(|t| format!("{}", t))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                    + "]"
+                            }
+                        ))])
+                        .with_notes(vec![format!(
+                            "Possible argument types are {}",
+                            possible_funcs
+                                .iter()
+                                .map(|(_, _, args)| String::from("[")
+                                    + &args
+                                        .iter()
+                                        .map(|t| format!("{}", t))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                    + "]")
+                                .collect::<Vec<_>>()
+                                .join(" or ")
+                        )])),
+                }
+            }
             Expr::Neg(expr, span) => {
-                let typ = self.infer_expr(*expr, should_be)?;
+                let typ = self.infer_expr(*expr)?;
                 if typ == Type::Builtin(BuiltinType::Float32, span.clone()) {
                     Ok(typ)
                 } else {
@@ -128,7 +257,7 @@ impl Typechecker {
                 }
             }
             Expr::Not(expr, span) => {
-                let typ = self.infer_expr(*expr, should_be)?;
+                let typ = self.infer_expr(*expr)?;
                 if typ == Type::Builtin(BuiltinType::Bool, span.clone()) {
                     Ok(typ)
                 } else {
@@ -139,22 +268,28 @@ impl Typechecker {
                     )))
                 }
             }
-            Expr::Int(..) => {
-                return Ok(Type::Builtin(BuiltinType::Int32, expr.get_span()));
-            }
-            Expr::Err => Ok(Type::Err),
-            _ => todo!("func calls {:#?}", expr),
+            Expr::Int(..) => Ok(BaserBaseType::WhateverIsNotAConcreteType(
+                BaseType::Integer,
+                expr.get_span(),
+            )),
+            Expr::Err => Ok(BaserBaseType::Concrete(Type::Err)),
+
+            _ => todo!("TODO: {:#?}", expr),
         }
     }
 }
 
-
+#[derive(Clone, PartialEq)]
 pub enum BaseType {
     Integer,
     Float,
-    Bool,
-    Array(Box<BaseType>, usize),
-    Struct(String)
+    Array(Box<BaserBaseType>, usize),
+}
+
+#[derive(Clone, PartialEq)]
+pub enum BaserBaseType {
+    Concrete(Type),
+    WhateverIsNotAConcreteType(BaseType, SourceSpan),
 }
 
 impl PartialEq<Type> for BaseType {
@@ -162,48 +297,67 @@ impl PartialEq<Type> for BaseType {
         match self {
             Self::Integer => {
                 if let Type::Builtin(builtin, _) = other {
-                    match builtin {
-                        BuiltinType::Int8 | BuiltinType::Int16 | BuiltinType::Int32 | BuiltinType::Int64 | BuiltinType::Uint8 | BuiltinType::Uint16 | BuiltinType::Uint32 | BuiltinType::Uint64 => true,
-                        _ => false
-                    }
+                    matches!(
+                        builtin,
+                        BuiltinType::Int8
+                            | BuiltinType::Int16
+                            | BuiltinType::Int32
+                            | BuiltinType::Int64
+                            | BuiltinType::Uint8
+                            | BuiltinType::Uint16
+                            | BuiltinType::Uint32
+                            | BuiltinType::Uint64
+                    )
                 } else {
                     false
                 }
             }
             Self::Float => {
                 if let Type::Builtin(builtin, _) = other {
-                    match builtin {
-                        BuiltinType::Float32 | BuiltinType::Float64 => true,
-                        _ => false
-                    }
+                    matches!(builtin, BuiltinType::Float32 | BuiltinType::Float64)
                 } else {
                     false
                 }
             }
-            Self::Bool => {
-                if let Type::Builtin(builtin, _) = other {
-                    match builtin {
-                        BuiltinType::Bool => true,
-                        _ => false
-                    }
-                } else {
-                    false
-                }
-            }
-            Self::Array(typ, len) => {
-                if let Type::Array(typ2, len2, _) = other {
-                    **typ == **typ2 && len == len2
-                } else {
-                    false
-                }
-            }
-            Self::Struct(name) => {
-                if let Type::Struct(name2, _) = other {
-                    name == name2
+            Self::Array(typ, size) => {
+                if let Type::Array(othertyp, othersize, _) = other {
+                    **typ == **othertyp && size == othersize
                 } else {
                     false
                 }
             }
         }
+    }
+}
+
+impl PartialEq<Type> for BaserBaseType {
+    fn eq(&self, other: &Type) -> bool {
+        match self {
+            Self::Concrete(typ) => typ == other,
+            Self::WhateverIsNotAConcreteType(typ, _) => typ == other,
+        }
+    }
+}
+
+impl Display for BaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Integer => write!(f, "Int")?,
+            Self::Float => write!(f, "Float")?,
+            Self::Array(typ, size) => write!(f, "Array[{}; {}]", typ, size)?,
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for BaserBaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Concrete(typ) => write!(f, "{}", typ)?,
+            Self::WhateverIsNotAConcreteType(base, _) => write!(f, "{}", base)?,
+        }
+
+        Ok(())
     }
 }
