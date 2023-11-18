@@ -293,7 +293,7 @@ pub enum BaseType {
     Array(Box<BaserBaseType>, usize),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum BaserBaseType {
     Concrete(Type),
     WhateverIsNotAConcreteType(BaseType, SourceSpan),
@@ -337,10 +337,28 @@ impl PartialEq<Type> for BaseType {
     }
 }
 
+impl PartialEq for BaserBaseType {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Self::Concrete(typ) => other == typ,
+            Self::WhateverIsNotAConcreteType(typ, _) => other == typ,
+        }
+    }
+}
+
 impl PartialEq<Type> for BaserBaseType {
     fn eq(&self, other: &Type) -> bool {
         match self {
             Self::Concrete(typ) => typ == other,
+            Self::WhateverIsNotAConcreteType(typ, _) => typ == other,
+        }
+    }
+}
+
+impl PartialEq<BaseType> for BaserBaseType {
+    fn eq(&self, other: &BaseType) -> bool {
+        match self {
+            Self::Concrete(typ) => other == typ,
             Self::WhateverIsNotAConcreteType(typ, _) => typ == other,
         }
     }
