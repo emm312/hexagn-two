@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::Hash};
 
-use codespan_reporting::diagnostic::Diagnostic;
+use codespan_reporting::diagnostic::{Diagnostic, Label, LabelStyle};
 
 use crate::{
     ast::{BinOp, BuiltinType, Expr, Stmt, TopLvl, Type},
@@ -66,6 +66,11 @@ impl Typechecker {
                             }
                         }
                     }
+                    Stmt::Return(expr, _) => {
+                        if let Some(_) = expr {
+                            self.infer_expr(expr.as_ref().unwrap().clone(), &Some(ret_t.clone()))?;
+                        }
+                    }
                     _ => todo!(),
                 }
             }
@@ -77,13 +82,17 @@ impl Typechecker {
     fn infer_expr(&self, expr: Expr, should_be: &Option<Type>) -> Result<Type, Diagnostic<usize>> {
         match expr {
             Expr::BinOp(lhs, _, rhs, _) => {
-                let lhs = self.infer_expr(*lhs, should_be)?;
-                let rhs = self.infer_expr(*rhs, should_be)?;
-                if lhs != rhs {
+                let lhs_t = self.infer_expr(*lhs.clone(), should_be)?;
+                let rhs_t = self.infer_expr(*rhs.clone(), should_be)?;
+                if lhs_t != rhs_t {
                     Err(Diagnostic::error()
-                        .with_message(format!("Type mismatch: {} and {}", lhs, rhs)))
+                        .with_message(format!("Type mismatch: {} and {}", lhs_t, rhs_t))
+                        .with_labels(vec![
+                            Label::new(LabelStyle::Secondary, lhs.clone().get_span().file, lhs.clone().get_span().span),
+                            Label::new(LabelStyle::Secondary, rhs.clone().get_span().file, rhs.clone().get_span().span),
+                        ]))
                 } else {
-                    Ok(lhs)
+                    Ok(lhs_t)
                 }
             }
             Expr::Array(exprs, span) => {
@@ -135,6 +144,66 @@ impl Typechecker {
             }
             Expr::Err => Ok(Type::Err),
             _ => todo!("func calls {:#?}", expr),
+        }
+    }
+}
+
+
+pub enum BaseType {
+    Integer,
+    Float,
+    Bool,
+    Array(Box<BaseType>, usize),
+    Struct(String)
+}
+
+impl PartialEq<Type> for BaseType {
+    fn eq(&self, other: &Type) -> bool {
+        match self {
+            Self::Integer => {
+                if let Type::Builtin(builtin, _) = other {
+                    match builtin {
+                        BuiltinType::Int8 | BuiltinType::Int16 | BuiltinType::Int32 | BuiltinType::Int64 | BuiltinType::Uint8 | BuiltinType::Uint16 | BuiltinType::Uint32 | BuiltinType::Uint64 => true,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            }
+            Self::Float => {
+                if let Type::Builtin(builtin, _) = other {
+                    match builtin {
+                        BuiltinType::Float32 | BuiltinType::Float64 => true,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            }
+            Self::Bool => {
+                if let Type::Builtin(builtin, _) = other {
+                    match builtin {
+                        BuiltinType::Bool => true,
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            }
+            Self::Array(typ, len) => {
+                if let Type::Array(typ2, len2, _) = other {
+                    **typ == **typ2 && len == len2
+                } else {
+                    false
+                }
+            }
+            Self::Struct(name) => {
+                if let Type::Struct(name2, _) = other {
+                    name == name2
+                } else {
+                    false
+                }
+            }
         }
     }
 }
