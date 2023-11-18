@@ -7,6 +7,7 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
+use hexagn_two::typechk;
 
 #[derive(Parser)]
 struct Args {
@@ -23,7 +24,12 @@ fn main() {
     files.add(&args.input_file, &code);
     let (ast, diags) = hexagn_two::ast::parse(&code, 0);
     println!("{:#?}", ast);
-    print_diags(diags, files);
+    print_diags(diags, files.clone());
+
+    typechk::typecheck(&ast).unwrap_or_else(|err| {
+        print_diags(vec![err], files);
+        std::process::exit(1);
+    });
 }
 
 fn print_diags(diags: Vec<Diagnostic<usize>>, file_map: SimpleFiles<&String, &String>) {

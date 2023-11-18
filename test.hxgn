@@ -1,4 +1,4 @@
 int8 main() {
-    println d;
-    + 3
+    int32 f = 5+"c";
+    int32 b = "penis";
 }

@@ -3,4 +3,5 @@ use lalrpop_util::lalrpop_mod;
 pub mod ast;
 lalrpop_mod!(pub grammar);
 
-pub mod gen;
+pub mod func_mangling;
+pub mod typechk;

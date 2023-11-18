@@ -32,6 +32,18 @@ match {
     "while",
     "return",
     "struct",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float32",
+    "float64",
+    "bool",
+    "void",
     ";",
     r#"\"[\w|\d|\s|\.|!]+\""#,
     r"\s+" => {},
@@ -66,9 +78,10 @@ Stmt: Stmt = {
 }
 
 TypeParser: Type = {
-    <start: @L> <ident: Ident> <end: @R> => Type::Named(ident.to_string(), gen_sourcespan!(file, start..end)),
-    <start: @L> <ident: Ident> "*" <end: @R> => Type::Ptr(Box::new(Type::Named(ident.to_string(), gen_sourcespan!(file, start..end))), gen_sourcespan!(file, start..end)),
-    <start: @L> <ident: Ident> "[" <size: Num> "]" <end: @R> => Type::Array(Box::new(Type::Named(ident.to_string(), gen_sourcespan!(file, start..end))), gen_sourcespan!(file, start..end)),
+    BuiltinType,
+    <start: @L> <ident: Ident> <end: @R> => Type::Struct(ident.to_string(), gen_sourcespan!(file, start..end)),
+    <start: @L> <inner: TypeParser> "*" <end: @R> => Type::Ptr(Box::new(inner), gen_sourcespan!(file, start..end)),
+    <start: @L> <inner: TypeParser> "[" <size: Num> "]" <end: @R> => Type::Array(Box::new(inner), size as usize, gen_sourcespan!(file, start..end)),
 }
 
 Term: Expr = {
@@ -109,6 +122,21 @@ Expr: Expr = {
     <start: @L> <add: Add> "==" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Eq, Box::new(cmp), gen_sourcespan!(file, start..end)),
     <start: @L> <add: Add> "!=" <cmp: Expr> <end: @R> => Expr::BinOp(Box::new(add), BinOp::Neq, Box::new(cmp), gen_sourcespan!(file, start..end)),
     ! => gen_err!(errors, Expr::Err, <>.error)
+}
+
+BuiltinType: Type = {
+    <start: @L> "int8" <end: @R> => Type::Builtin(BuiltinType::Int8, gen_sourcespan!(file, start..end)),
+    <start: @L> "int16" <end: @R> => Type::Builtin(BuiltinType::Int16, gen_sourcespan!(file, start..end)),
+    <start: @L> "int32" <end: @R> => Type::Builtin(BuiltinType::Int32, gen_sourcespan!(file, start..end)),
+    <start: @L> "int64" <end: @R> => Type::Builtin(BuiltinType::Int64, gen_sourcespan!(file, start..end)),
+    <start: @L> "uint8" <end: @R> => Type::Builtin(BuiltinType::Uint8, gen_sourcespan!(file, start..end)),
+    <start: @L> "uint16" <end: @R> => Type::Builtin(BuiltinType::Uint16, gen_sourcespan!(file, start..end)),
+    <start: @L> "uint32" <end: @R> => Type::Builtin(BuiltinType::Uint32, gen_sourcespan!(file, start..end)),
+    <start: @L> "uint64" <end: @R> => Type::Builtin(BuiltinType::Uint64, gen_sourcespan!(file, start..end)),
+    <start: @L> "float32" <end: @R> => Type::Builtin(BuiltinType::Float32, gen_sourcespan!(file, start..end)),
+    <start: @L> "float64" <end: @R> => Type::Builtin(BuiltinType::Float64, gen_sourcespan!(file, start..end)),
+    <start: @L> "bool" <end: @R> => Type::Builtin(BuiltinType::Bool, gen_sourcespan!(file, start..end)),
+    <start: @L> "void" <end: @R> => Type::Builtin(BuiltinType::Void, gen_sourcespan!(file, start..end)),
 }
 
 Ident: String = r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string();

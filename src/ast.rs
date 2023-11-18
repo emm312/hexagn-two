@@ -1,4 +1,4 @@
-use std::{ops::Range, process::exit};
+use std::{fmt::Display, ops::Range, process::exit};
 
 use codespan_reporting::diagnostic::Diagnostic;
 use lalrpop_util::ParseError;
@@ -13,13 +13,43 @@ pub enum TopLvl {
     Err,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Type {
-    Named(String, SourceSpan),
-    Array(Box<Type>, SourceSpan),
+    Struct(String, SourceSpan),
+    Builtin(BuiltinType, SourceSpan),
+    Array(Box<Type>, usize, SourceSpan),
     Ptr(Box<Type>, SourceSpan),
     Const(Box<Type>, SourceSpan),
     Err,
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::Builtin(a, _), Type::Builtin(b, _)) => a == b,
+            (Type::Array(a, s1, _), Type::Array(b, s2, _)) => a == b && s1 == s2,
+            (Type::Ptr(a, _), Type::Ptr(b, _)) => a == b,
+            (Type::Const(a, _), Type::Const(b, _)) => a == b,
+            (Type::Struct(a, _), Type::Struct(b, _)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum BuiltinType {
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Uint8,
+    Uint16,
+    Uint32,
+    Uint64,
+    Float32,
+    Float64,
+    Bool,
+    Void,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +77,27 @@ pub enum Expr {
     Neg(Box<Expr>, SourceSpan),
     Not(Box<Expr>, SourceSpan),
     Err,
+}
+
+impl Expr {
+    pub fn get_span(&self) -> SourceSpan {
+        match self {
+            Expr::Ident(_, span) => span.clone(),
+            Expr::Int(_, span) => span.clone(),
+            Expr::Float(_, span) => span.clone(),
+            Expr::String(_, span) => span.clone(),
+            Expr::Array(_, span) => span.clone(),
+            Expr::Call(_, _, span) => span.clone(),
+            Expr::Index(_, _, span) => span.clone(),
+            Expr::BinOp(_, _, _, span) => span.clone(),
+            Expr::Neg(_, span) => span.clone(),
+            Expr::Not(_, span) => span.clone(),
+            Expr::Err => SourceSpan {
+                file: 0,
+                span: 0..0,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -146,4 +197,16 @@ pub fn parse(code: &str, file: usize) -> (Vec<TopLvl>, Vec<Diagnostic<usize>>) {
         diags.push(diagnostic);
     }
     (ast, diags)
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Array(t, size, _) => write!(f, "ARR{}_{}", size, t),
+            Type::Ptr(t, _) => write!(f, "PTR_{}", t),
+            Type::Const(t, _) => write!(f, "CONST_{}", t),
+            Type::Builtin(n, _) => write!(f, "{:?}", n),
+            _ => Ok(()),
+        }
+    }
 }
