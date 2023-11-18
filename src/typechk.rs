@@ -167,16 +167,23 @@ impl Typechecker {
                         span,
                     ))
                 } else {
-                    Err(Diagnostic::error().with_message(format!(
-                        "Type mismatch: {}",
-                        String::from("[")
-                            + &typ
-                                .iter()
-                                .map(|t| format!("{}", t))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                            + "]"
-                    )))
+                    Err(Diagnostic::error()
+                        .with_message("Type mismatch")
+                        .with_labels(vec![
+                            Label::new(LabelStyle::Primary, span.file, span.span.clone())
+                                .with_message(format!(
+                                    "This has type: {}",
+                                    String::from("[")
+                                        + &typ
+                                            .iter()
+                                            .map(|t| format!("{}", t))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                        + "]"
+                                )),
+                            Label::new(LabelStyle::Secondary, span.file, span.span)
+                                .with_message("Array cannot have mixed types"),
+                        ]))
                 }
             }
             Expr::Float(_, span) => Ok(BaserBaseType::WhateverIsNotAConcreteType(
