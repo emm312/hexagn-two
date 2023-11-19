@@ -280,8 +280,23 @@ impl Typechecker {
                 expr.get_span(),
             )),
             Expr::Err => Ok(BaserBaseType::Concrete(Type::Err)),
-
-            _ => todo!("TODO: {:#?}", expr),
+            Expr::Ident(i, span) => {
+                if let Some(typ) = self.vars.get(&i) {
+                    Ok(
+                        BaserBaseType::Concrete(typ.clone()),
+                    )
+                } else {
+                    Err({
+                        Diagnostic::error()
+                            .with_message("Variable does not exist")
+                            .with_labels(vec![Label::new(
+                                LabelStyle::Primary,
+                                span.file,
+                                span.span.clone(),
+                            )])
+                    })
+                }
+            }
         }
     }
 }
