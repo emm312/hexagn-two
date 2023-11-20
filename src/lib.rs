@@ -5,3 +5,4 @@ lalrpop_mod!(pub grammar);
 
 pub mod func_mangling;
 pub mod typechk;
+pub mod typed_ast;
