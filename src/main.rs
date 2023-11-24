@@ -7,13 +7,13 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
-use hexagn_two::typechk;
+use hexagn_two::{llvm::Codegen, typechk};
 
 #[derive(Parser)]
 struct Args {
     #[arg()]
     input_file: String,
-    #[arg(short, long, default_value_t = String::from("out.s"))]
+    #[arg(short, long, default_value_t = String::from("out.o"))]
     output_file: String,
 }
 
@@ -23,13 +23,17 @@ fn main() {
     let code = std::fs::read_to_string(&args.input_file).unwrap();
     files.add(&args.input_file, &code);
     let (ast, diags) = hexagn_two::ast::parse(&code, 0);
-    println!("{:#?}", ast);
     print_diags(diags, files.clone());
 
-    typechk::typecheck(&ast).unwrap_or_else(|err| {
+    let typed_ast = typechk::typecheck(&ast).unwrap_or_else(|err| {
         print_diags(vec![err], files);
         std::process::exit(1);
     });
+
+    #[cfg(feature = "llvm")]
+    {
+        Codegen::compile(typed_ast, &args.input_file, &args.output_file)
+    }
 }
 
 fn print_diags(diags: Vec<Diagnostic<usize>>, file_map: SimpleFiles<&String, &String>) {

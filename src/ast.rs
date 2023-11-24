@@ -10,6 +10,7 @@ pub enum TopLvl {
     Import(String, SourceSpan),
     FuncDef(Type, String, Vec<(Type, String)>, Vec<Stmt>, SourceSpan),
     StructDef(String, Vec<(Type, String)>, SourceSpan),
+    External(Type, String, Vec<(Type, String)>, SourceSpan),
     Err,
 }
 

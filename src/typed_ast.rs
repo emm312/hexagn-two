@@ -1,9 +1,16 @@
-use crate::ast::{SourceSpan, Type, BinOp};
+use crate::ast::{BinOp, SourceSpan, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedTopLvl {
     Import(String, SourceSpan),
-    FuncDef(Type, String, Vec<(Type, String)>, Vec<TypedStmt>, SourceSpan),
+    FuncDef(
+        Type,
+        String,
+        Vec<(Type, String)>,
+        Vec<TypedStmt>,
+        SourceSpan,
+    ),
+    Extern(Type, String, Vec<(Type, String)>, SourceSpan),
     StructDef(String, Vec<(Type, String)>, SourceSpan),
 }
 
@@ -11,11 +18,16 @@ pub enum TypedTopLvl {
 pub enum TypedStmt {
     VarDecl(Type, String, Option<TypedExpr>, SourceSpan),
     Assign(String, TypedExpr, SourceSpan),
-    If(TypedExpr, Vec<TypedStmt>, Option<Vec<TypedStmt>>, SourceSpan),
+    If(
+        TypedExpr,
+        Vec<TypedStmt>,
+        Option<Vec<TypedStmt>>,
+        SourceSpan,
+    ),
     While(TypedExpr, Vec<TypedStmt>, SourceSpan),
     For(TypedExpr, TypedExpr, TypedExpr, Vec<TypedStmt>, SourceSpan),
     Return(Option<TypedExpr>, SourceSpan),
-    Call(String, Vec<TypedExpr>, SourceSpan),
+    Call(Type, String, Vec<Type>, SourceSpan),
     Err,
 }
 
@@ -26,7 +38,7 @@ pub enum TypedExpr {
     Float(f32, SourceSpan),
     String(String, SourceSpan),
     Array(Vec<TypedExpr>, SourceSpan),
-    Call(String, Vec<TypedExpr>, SourceSpan),
+    Call(Type, String, Vec<Type>, SourceSpan),
     Index(String, Box<TypedExpr>, SourceSpan),
     BinOp(Box<TypedExpr>, BinOp, Box<TypedExpr>, SourceSpan),
     Neg(Box<TypedExpr>, SourceSpan),
@@ -42,7 +54,7 @@ impl TypedExpr {
             TypedExpr::Float(_, span) => span.clone(),
             TypedExpr::String(_, span) => span.clone(),
             TypedExpr::Array(_, span) => span.clone(),
-            TypedExpr::Call(_, _, span) => span.clone(),
+            TypedExpr::Call(.., span) => span.clone(),
             TypedExpr::Index(_, _, span) => span.clone(),
             TypedExpr::BinOp(_, _, _, span) => span.clone(),
             TypedExpr::Neg(_, span) => span.clone(),

@@ -2,9 +2,12 @@ use std::{collections::HashMap, fmt::Display};
 
 use codespan_reporting::diagnostic::{Diagnostic, Label, LabelStyle};
 
-use crate::ast::{BuiltinType, Expr, SourceSpan, Stmt, TopLvl, Type};
+use crate::{
+    ast::{BuiltinType, Expr, SourceSpan, Stmt, TopLvl, Type},
+    typed_ast::{TypedExpr, TypedStmt, TypedTopLvl},
+};
 
-pub fn typecheck(ast: &Vec<TopLvl>) -> Result<(), Diagnostic<usize>> {
+pub fn typecheck(ast: &Vec<TopLvl>) -> Result<Vec<TypedTopLvl>, Diagnostic<usize>> {
     let mut typechecker = Typechecker::new();
     typechecker.typecheck(ast)
 }
@@ -23,19 +26,41 @@ impl Typechecker {
         }
     }
 
-    fn typecheck(&mut self, ast: &Vec<TopLvl>) -> Result<(), Diagnostic<usize>> {
+    fn typecheck(&mut self, ast: &Vec<TopLvl>) -> Result<Vec<TypedTopLvl>, Diagnostic<usize>> {
         let mut bodies_to_check = Vec::new();
+        let mut typed_ast = Vec::new();
         for toplvl in ast {
-            if let TopLvl::FuncDef(typ, name, args, body, _) = toplvl {
+            if let TopLvl::FuncDef(typ, name, args, body, span) = toplvl {
                 self.funcs.push((
                     name.clone(),
                     typ.clone(),
                     args.iter().map(|(t, _)| t.clone()).collect(),
                 ));
-                bodies_to_check.push((body, args, typ));
+                bodies_to_check.push((body, args, typ, name, span));
+            } else if let TopLvl::External(typ, name, args, span) = toplvl {
+                self.funcs.push((
+                    name.clone(),
+                    typ.clone(),
+                    args.iter().map(|(t, _)| t.clone()).collect(),
+                ));
+                typed_ast.push(TypedTopLvl::Extern(
+                    typ.clone(),
+                    name.clone(),
+                    args.clone(),
+                    span.clone(),
+                ));
+            } else if let TopLvl::StructDef(name, fields, span) = toplvl {
+                typed_ast.push(TypedTopLvl::StructDef(
+                    name.clone(),
+                    fields.clone(),
+                    span.clone(),
+                ));
+            } else if let TopLvl::Import(name, span) = toplvl {
+                typed_ast.push(TypedTopLvl::Import(name.clone(), span.clone()));
             }
         }
-        for (body, args, _) in bodies_to_check {
+        for (body, args, func_checked_ret_t, name, span) in bodies_to_check {
+            let mut fn_body = Vec::new();
             self.vars = args.iter().fold(HashMap::new(), |mut acc, (typ, name)| {
                 acc.insert(name.clone(), typ.clone());
                 acc
@@ -63,13 +88,24 @@ impl Typechecker {
                                     ]));
                             }
                         }
+                        fn_body.push(TypedStmt::VarDecl(
+                            typ.clone(),
+                            name.to_string(),
+                            expr.clone().map(|expr| self.to_typed_expr(&expr)),
+                            span.clone(),
+                        ));
                     }
-                    Stmt::Return(expr, _) => {
+                    Stmt::Return(expr, span) => {
                         if expr.is_some() {
                             self.infer_expr(expr.as_ref().unwrap().clone())?;
                         }
+                        fn_body.push(TypedStmt::Return(
+                            expr.clone().map(|e| self.to_typed_expr(&e)),
+                            span.clone(),
+                        ))
                     }
                     Stmt::Call(name, args, span) => {
+                        let mut fargs_t = Vec::new();
                         let mut args_t = Vec::new();
                         for arg in args {
                             args_t.push(self.infer_expr(arg.clone())?)
@@ -81,14 +117,15 @@ impl Typechecker {
                             .collect::<Vec<_>>();
                         let func_ret = possible_funcs.iter().find_map(|(fname, ret, fargs)| {
                             if fname == name && &args_t == fargs {
+                                fargs_t = fargs.clone();
                                 Some(ret)
                             } else {
                                 None
                             }
                         });
-
+                        let ret_t_call;
                         match func_ret {
-                            Some(_) => return Ok(()),
+                            Some(ret) => ret_t_call = ret,
                             None => {
                                 return Err(Diagnostic::error()
                                     .with_message("Invalid arguments to function")
@@ -122,13 +159,26 @@ impl Typechecker {
                                     )]));
                             }
                         }
+                        fn_body.push(TypedStmt::Call(
+                            ret_t_call.clone(),
+                            name.clone(),
+                            fargs_t,
+                            span.clone(),
+                        ))
                     }
 
                     _ => todo!(),
                 }
             }
+            typed_ast.push(TypedTopLvl::FuncDef(
+                func_checked_ret_t.clone(),
+                name.clone(),
+                args.clone(),
+                fn_body,
+                span.clone(),
+            ))
         }
-        Ok(())
+        Ok(typed_ast)
     }
 
     fn infer_expr(&self, expr: Expr) -> Result<BaserBaseType, Diagnostic<usize>> {
@@ -282,9 +332,7 @@ impl Typechecker {
             Expr::Err => Ok(BaserBaseType::Concrete(Type::Err)),
             Expr::Ident(i, span) => {
                 if let Some(typ) = self.vars.get(&i) {
-                    Ok(
-                        BaserBaseType::Concrete(typ.clone()),
-                    )
+                    Ok(BaserBaseType::Concrete(typ.clone()))
                 } else {
                     Err({
                         Diagnostic::error()
@@ -297,6 +345,66 @@ impl Typechecker {
                     })
                 }
             }
+        }
+    }
+
+    fn to_typed_expr(&self, expr: &Expr) -> TypedExpr {
+        match expr {
+            Expr::BinOp(lhs, op, rhs, span) => TypedExpr::BinOp(
+                Box::new(self.to_typed_expr(&lhs)),
+                *op,
+                Box::new(self.to_typed_expr(&rhs)),
+                span.clone(),
+            ),
+            Expr::Array(exprs, span) => {
+                let typed_exprs = exprs
+                    .iter()
+                    .map(|elem| self.to_typed_expr(elem))
+                    .collect::<Vec<TypedExpr>>();
+                TypedExpr::Array(typed_exprs, span.clone())
+            }
+            Expr::Call(name, args, span) => {
+                let mut args_t = Vec::new();
+                for arg in args {
+                    args_t.push(self.infer_expr(arg.clone()).unwrap())
+                }
+
+                let possible_funcs = self
+                    .funcs
+                    .iter()
+                    .filter(|(fname, _, _)| fname == name)
+                    .collect::<Vec<_>>();
+
+                let mut fn_args = Vec::new();
+                let func_ret = possible_funcs
+                    .iter()
+                    .find_map(|(fname, ret, fargs)| {
+                        if fname == name && &args_t == fargs {
+                            fn_args = fargs.clone();
+                            Some(ret)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+
+                TypedExpr::Call(
+                    func_ret.clone(),
+                    name.clone(),
+                    fn_args.clone(),
+                    span.clone(),
+                )
+            }
+            Expr::Ident(i, span) => TypedExpr::Ident(i.clone(), span.clone()),
+            Expr::Int(i, span) => TypedExpr::Int(*i, span.clone()),
+            Expr::Float(i, span) => TypedExpr::Float(*i, span.clone()),
+            Expr::String(i, span) => TypedExpr::String(i.clone(), span.clone()),
+            Expr::Index(var, e, span) => {
+                TypedExpr::Index(var.clone(), Box::new(self.to_typed_expr(&e)), span.clone())
+            }
+            Expr::Neg(i, span) => TypedExpr::Neg(Box::new(self.to_typed_expr(&i)), span.clone()),
+            Expr::Not(i, span) => TypedExpr::Not(Box::new(self.to_typed_expr(&i)), span.clone()),
+            Expr::Err => unreachable!("should have been caught in typechecking"),
         }
     }
 }
