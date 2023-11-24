@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use codespan_reporting::diagnostic::{Diagnostic, Label, LabelStyle};
 
 use crate::{
-    ast::{BuiltinType, Expr, SourceSpan, Stmt, TopLvl, Type},
+    ast::{BuiltinType, Expr, FuncAttribute, SourceSpan, Stmt, TopLvl, Type},
     typed_ast::{TypedExpr, TypedStmt, TypedTopLvl},
 };
 
@@ -14,7 +14,7 @@ pub fn typecheck(ast: &Vec<TopLvl>) -> Result<Vec<TypedTopLvl>, Diagnostic<usize
 
 struct Typechecker {
     // mangled name along with return and arg types
-    funcs: Vec<(String, Type, Vec<Type>)>,
+    funcs: Vec<(Vec<FuncAttribute>, String, Type, Vec<Type>)>,
     vars: HashMap<String, Type>,
 }
 
@@ -30,25 +30,14 @@ impl Typechecker {
         let mut bodies_to_check = Vec::new();
         let mut typed_ast = Vec::new();
         for toplvl in ast {
-            if let TopLvl::FuncDef(typ, name, args, body, span) = toplvl {
+            if let TopLvl::FuncDef(attrs, typ, name, args, body, span) = toplvl {
                 self.funcs.push((
+                    attrs.clone(),
                     name.clone(),
                     typ.clone(),
                     args.iter().map(|(t, _)| t.clone()).collect(),
                 ));
-                bodies_to_check.push((body, args, typ, name, span));
-            } else if let TopLvl::External(typ, name, args, span) = toplvl {
-                self.funcs.push((
-                    name.clone(),
-                    typ.clone(),
-                    args.iter().map(|(t, _)| t.clone()).collect(),
-                ));
-                typed_ast.push(TypedTopLvl::Extern(
-                    typ.clone(),
-                    name.clone(),
-                    args.clone(),
-                    span.clone(),
-                ));
+                bodies_to_check.push((attrs, body, args, typ, name, span));
             } else if let TopLvl::StructDef(name, fields, span) = toplvl {
                 typed_ast.push(TypedTopLvl::StructDef(
                     name.clone(),
@@ -59,7 +48,7 @@ impl Typechecker {
                 typed_ast.push(TypedTopLvl::Import(name.clone(), span.clone()));
             }
         }
-        for (body, args, func_checked_ret_t, name, span) in bodies_to_check {
+        for (attrs, body, args, func_checked_ret_t, name, span) in bodies_to_check {
             let mut fn_body = Vec::new();
             self.vars = args.iter().fold(HashMap::new(), |mut acc, (typ, name)| {
                 acc.insert(name.clone(), typ.clone());
@@ -113,9 +102,9 @@ impl Typechecker {
                         let possible_funcs = self
                             .funcs
                             .iter()
-                            .filter(|(fname, _, _)| fname == name)
+                            .filter(|(_, fname, _, _)| fname == name)
                             .collect::<Vec<_>>();
-                        let func_ret = possible_funcs.iter().find_map(|(fname, ret, fargs)| {
+                        let func_ret = possible_funcs.iter().find_map(|(_, fname, ret, fargs)| {
                             if fname == name && &args_t == fargs {
                                 fargs_t = fargs.clone();
                                 Some(ret)
@@ -147,7 +136,7 @@ impl Typechecker {
                                         "Possible argument types are {}",
                                         possible_funcs
                                             .iter()
-                                            .map(|(_, _, args)| String::from("[")
+                                            .map(|(_, _, _, args)| String::from("[")
                                                 + &args
                                                     .iter()
                                                     .map(|t| format!("{}", t))
@@ -171,6 +160,7 @@ impl Typechecker {
                 }
             }
             typed_ast.push(TypedTopLvl::FuncDef(
+                attrs.clone(),
                 func_checked_ret_t.clone(),
                 name.clone(),
                 args.clone(),
@@ -254,9 +244,9 @@ impl Typechecker {
                 let possible_funcs = self
                     .funcs
                     .iter()
-                    .filter(|(fname, _, _)| fname == &name)
+                    .filter(|(_, fname, _, _)| fname == &name)
                     .collect::<Vec<_>>();
-                let func_ret = possible_funcs.iter().find_map(|(fname, ret, fargs)| {
+                let func_ret = possible_funcs.iter().find_map(|(_, fname, ret, fargs)| {
                     if fname == &name && &args_t == fargs {
                         Some(ret)
                     } else {
@@ -289,7 +279,7 @@ impl Typechecker {
                             "Possible argument types are {}",
                             possible_funcs
                                 .iter()
-                                .map(|(_, _, args)| String::from("[")
+                                .map(|(_, _, _, args)| String::from("[")
                                     + &args
                                         .iter()
                                         .map(|t| format!("{}", t))
@@ -372,13 +362,13 @@ impl Typechecker {
                 let possible_funcs = self
                     .funcs
                     .iter()
-                    .filter(|(fname, _, _)| fname == name)
+                    .filter(|(_, fname, _, _)| fname == name)
                     .collect::<Vec<_>>();
 
                 let mut fn_args = Vec::new();
                 let func_ret = possible_funcs
                     .iter()
-                    .find_map(|(fname, ret, fargs)| {
+                    .find_map(|(_, fname, ret, fargs)| {
                         if fname == name && &args_t == fargs {
                             fn_args = fargs.clone();
                             Some(ret)
@@ -391,7 +381,7 @@ impl Typechecker {
                 TypedExpr::Call(
                     func_ret.clone(),
                     name.clone(),
-                    fn_args.clone(),
+                    fn_args.into_iter().zip(args.into_iter().map(|e| self.to_typed_expr(e))).collect(),
                     span.clone(),
                 )
             }

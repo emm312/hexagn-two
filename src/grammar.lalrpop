@@ -44,7 +44,10 @@ match {
     "float64",
     "bool",
     "void",
+    "ext",
     ";",
+    "@nomangle",
+    "@external",
     r#"\"[\w|\d|\s|\.|!]+\""#,
     r"\s+" => {},
     r"\/\/.*" => {}
@@ -54,8 +57,15 @@ pub Hexagn: Vec<TopLvl> = {
     TopLvl*
 }
 
+FuncAttribute: FuncAttribute = {
+    "@nomangle" => FuncAttribute::NoMangle,
+    "@external" => FuncAttribute::External,
+}
+Attrs: Vec<FuncAttribute> = FuncAttribute*;
+
 TopLvl: TopLvl = {
-    <start: @L> <typ: TypeParser> <name: Ident> "(" <args: Comma<FuncArg>> ")" "{" <body: Stmt*> "}" <end: @R> => TopLvl::FuncDef(typ, name, args, body, gen_sourcespan!(file, start..end)),
+    <start: @L> <attrs: Attrs> <typ: TypeParser> <name: Ident> "(" <args: Comma<FuncArg>> ")" "{" <body: Stmt*> "}" <end: @R> => TopLvl::FuncDef(attrs, typ, name, args, body, gen_sourcespan!(file, start..end)),
+    <start: @L> <attrs: Attrs> <typ: TypeParser> <name: Ident> "(" <args: Comma<FuncArg>> ")" ";" <end: @R> => TopLvl::FuncDef(attrs, typ, name, args, Vec::new(), gen_sourcespan!(file, start..end)),
     <start: @L> "struct" <name: Ident> "{" <fields: Comma<FuncArg>> "}" <end: @R> => TopLvl::StructDef(name, fields, gen_sourcespan!(file, start..end)),
     ! => gen_err!(errors, TopLvl::Err, <>.error)
 }

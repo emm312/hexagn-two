@@ -6,11 +6,23 @@ use lalrpop_util::ParseError;
 use crate::grammar;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FuncAttribute {
+    NoMangle,
+    External,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TopLvl {
     Import(String, SourceSpan),
-    FuncDef(Type, String, Vec<(Type, String)>, Vec<Stmt>, SourceSpan),
+    FuncDef(
+        Vec<FuncAttribute>,
+        Type,
+        String,
+        Vec<(Type, String)>,
+        Vec<Stmt>,
+        SourceSpan,
+    ),
     StructDef(String, Vec<(Type, String)>, SourceSpan),
-    External(Type, String, Vec<(Type, String)>, SourceSpan),
     Err,
 }
 

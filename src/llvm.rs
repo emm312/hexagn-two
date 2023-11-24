@@ -6,14 +6,14 @@ use inkwell::{
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType},
-    values::{FunctionValue, PointerValue},
+    values::{FunctionValue, PointerValue, BasicMetadataValueEnum, BasicValueEnum},
     AddressSpace, OptimizationLevel,
 };
 
 use crate::{
-    ast::{BuiltinType, Type},
+    ast::{BuiltinType, FuncAttribute, Type, BinOp},
     func_mangling,
-    typed_ast::TypedTopLvl,
+    typed_ast::{TypedTopLvl, TypedExpr},
 };
 
 pub struct Codegen<'ctx> {
@@ -37,6 +37,7 @@ impl<'ctx> Codegen<'ctx> {
             vars: HashMap::new(),
         };
         codegen.compile_ast(ast);
+        codegen.module.print_to_stderr();
         codegen.write_to_object(output_path);
     }
 
@@ -66,43 +67,44 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     fn compile_ast(&mut self, ast: Vec<TypedTopLvl>) {
-        println!("{:#?}", ast);
-        ast.iter().map(|elem| match elem {
-            TypedTopLvl::Extern(typ, name, args, _span) => {
-                let name = func_mangling::mangle_function(&name, &args, &typ);
+        let _ = ast.iter().map(|elem| match elem {
+            TypedTopLvl::FuncDef(attrs, typ, name, args, _, _span) => {
+                let mname = if attrs.contains(&FuncAttribute::NoMangle) {
+                    name.clone()
+                } else {
+                    func_mangling::mangle_function(&name, &args, &typ)
+                };
                 let args = args
                     .iter()
                     .map(|(t, _)| self.to_llvm_t(t))
                     .collect::<Vec<_>>();
                 let fn_t = Self::as_fn_type(self.to_llvm_t(&typ), args);
-                self.module
-                    .add_function(&name, fn_t, Some(Linkage::External));
-            }
-            TypedTopLvl::FuncDef(typ, name, args, _, _span) => {
-                let name = func_mangling::mangle_function(&name, &args, &typ);
-                let args = args
-                    .iter()
-                    .map(|(t, _)| self.to_llvm_t(t))
-                    .collect::<Vec<_>>();
-                let fn_t = Self::as_fn_type(self.to_llvm_t(&typ), args);
-                self.module.add_function(&name, fn_t, None);
+                self.module.add_function(&mname, fn_t, {
+                    if attrs.contains(&FuncAttribute::External) {
+                        Some(Linkage::External)
+                    } else {
+                        None
+                    }
+                });
             }
             _ => (),
-        });
+        }).collect::<Vec<()>>();
 
         for def in ast {
             match def {
-                TypedTopLvl::Extern(typ, name, args, span) => {
-                    let name = func_mangling::mangle_function(&name, &args, &typ);
-                    let args = args
-                        .iter()
-                        .map(|(t, _)| self.to_llvm_t(t))
-                        .collect::<Vec<_>>();
-                    let fn_t = Self::as_fn_type(self.to_llvm_t(&typ), args);
-                    self.module
-                        .add_function(&name, fn_t, Some(Linkage::External));
+                TypedTopLvl::FuncDef(attrs, typ, name, args, body, _span) => {
+                    let mname = if attrs.contains(&FuncAttribute::NoMangle) {
+                        name.clone()
+                    } else {
+                        func_mangling::mangle_function(&name, &args, &typ)
+                    };
+                    let fn_t = self.module.get_function(&mname).unwrap();
+                    self.cur_fn = Some(fn_t);
+                    if body.len() > 0 {
+                        let entry = self.context.append_basic_block(fn_t, "entry");
+                        self.builder.position_at_end(entry);
+                    }
                 }
-                TypedTopLvl::FuncDef(typ, name, args, body, span) => {}
                 _ => todo!(),
             }
         }
@@ -128,7 +130,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn to_llvm_t(&self, typ: &Type) -> AnyTypeEnum<'_> {
+    fn to_llvm_t(&self, typ: &Type) -> AnyTypeEnum<'ctx> {
         match typ {
             Type::Array(t, len, _) => {
                 let t = self.to_llvm_t(t);
@@ -156,7 +158,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn builtin_to_llvm(&self, typ: &BuiltinType) -> AnyTypeEnum<'_> {
+    fn builtin_to_llvm(&self, typ: &BuiltinType) -> AnyTypeEnum<'ctx> {
         match typ {
             BuiltinType::Int8 => self.context.i8_type().as_any_type_enum(),
             BuiltinType::Int16 => self.context.i16_type().as_any_type_enum(),
@@ -170,6 +172,17 @@ impl<'ctx> Codegen<'ctx> {
             BuiltinType::Float64 => self.context.f64_type().as_any_type_enum(),
             BuiltinType::Bool => self.context.bool_type().as_any_type_enum(),
             BuiltinType::Void => self.context.void_type().as_any_type_enum(),
+        }
+    }
+
+    pub fn compile_expr(&self, expr: TypedExpr) -> BasicValueEnum<'ctx> {
+        match expr {
+            TypedExpr::BinOp(lhs, op, rhs, _) => {
+                let lhs_c = self.compile_expr(*lhs);
+                let rhs_c = self.compile_expr(*rhs);
+                todo!()
+            }
+            _ => todo!()
         }
     }
 }

@@ -1,16 +1,16 @@
-use crate::ast::{BinOp, SourceSpan, Type};
+use crate::ast::{BinOp, FuncAttribute, SourceSpan, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedTopLvl {
     Import(String, SourceSpan),
     FuncDef(
+        Vec<FuncAttribute>,
         Type,
         String,
         Vec<(Type, String)>,
         Vec<TypedStmt>,
         SourceSpan,
     ),
-    Extern(Type, String, Vec<(Type, String)>, SourceSpan),
     StructDef(String, Vec<(Type, String)>, SourceSpan),
 }
 
@@ -38,7 +38,7 @@ pub enum TypedExpr {
     Float(f32, SourceSpan),
     String(String, SourceSpan),
     Array(Vec<TypedExpr>, SourceSpan),
-    Call(Type, String, Vec<Type>, SourceSpan),
+    Call(Type, String, Vec<(Type, TypedExpr)>, SourceSpan),
     Index(String, Box<TypedExpr>, SourceSpan),
     BinOp(Box<TypedExpr>, BinOp, Box<TypedExpr>, SourceSpan),
     Neg(Box<TypedExpr>, SourceSpan),
