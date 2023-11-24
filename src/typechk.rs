@@ -151,11 +151,73 @@ impl Typechecker {
                         fn_body.push(TypedStmt::Call(
                             ret_t_call.clone(),
                             name.clone(),
-                            fargs_t,
+                            fargs_t
+                                .into_iter()
+                                .zip(args.into_iter().map(|e| self.to_typed_expr(e)))
+                                .collect(),
                             span.clone(),
                         ))
                     }
-
+                    Stmt::Assign(var, expr, _) => {
+                        let var_t = self.vars.get(var).unwrap();
+                        let expr_t = self.infer_expr(expr.clone())?;
+                        if &expr_t == var_t {
+                            return Err(Diagnostic::error()
+                                .with_message(format!("Type mismatch: {} and {}", var_t, expr_t))
+                                .with_labels(vec![
+                                    Label::new(
+                                        LabelStyle::Primary,
+                                        span.file,
+                                        span.span.start..span.span.end,
+                                    )
+                                    .with_message("declared here"),
+                                    Label::new(
+                                        LabelStyle::Secondary,
+                                        expr.get_span().file,
+                                        expr.get_span().span.start..expr.get_span().span.end,
+                                    )
+                                    .with_message("expression has this type"),
+                                ]));
+                        }
+                        fn_body.push(TypedStmt::Assign(
+                            var.clone(),
+                            self.to_typed_expr(&expr),
+                            span.clone(),
+                        ))
+                    }
+                    //Stmt::If(cond, if_body, else_body, span) => {
+                    //    let cond_t = self.infer_expr(cond.clone())?;
+                    //    if cond_t != Type::Builtin(BuiltinType::Bool, span.clone()) {
+                    //        return Err(Diagnostic::error()
+                    //            .with_message(format!(
+                    //                "Type mismatch: {} and {}",
+                    //                cond_t,
+                    //                Type::Builtin(BuiltinType::Bool, span.clone())
+                    //            ))
+                    //            .with_labels(vec![Label::new(
+                    //                LabelStyle::Primary,
+                    //                span.file,
+                    //                span.span.clone(),
+                    //            )
+                    //            .with_message("Condition has type")]));
+                    //    }
+                    //    let mut typed_if_body = Vec::new();
+                    //    for stmt in if_body {
+                    //        typed_if_body.push(self.to_typed_stmt(stmt));
+                    //    }
+                    //    let mut typed_else_body = Vec::new();
+                    //    if let Some(else_body) = else_body {
+                    //        for stmt in else_body {
+                    //            typed_else_body.push(self.to_typed_stmt(stmt));
+                    //        }
+                    //    }
+                    //    fn_body.push(TypedStmt::If(
+                    //        self.to_typed_expr(&cond),
+                    //        typed_if_body,
+                    //        Some(typed_else_body),
+                    //        span.clone(),
+                    //    ))
+                    //}
                     _ => todo!(),
                 }
             }
@@ -381,7 +443,10 @@ impl Typechecker {
                 TypedExpr::Call(
                     func_ret.clone(),
                     name.clone(),
-                    fn_args.into_iter().zip(args.into_iter().map(|e| self.to_typed_expr(e))).collect(),
+                    fn_args
+                        .into_iter()
+                        .zip(args.into_iter().map(|e| self.to_typed_expr(e)))
+                        .collect(),
                     span.clone(),
                 )
             }

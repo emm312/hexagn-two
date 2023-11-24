@@ -25,9 +25,15 @@ pub enum TypedStmt {
         SourceSpan,
     ),
     While(TypedExpr, Vec<TypedStmt>, SourceSpan),
-    For(TypedExpr, TypedExpr, TypedExpr, Vec<TypedStmt>, SourceSpan),
+    For(
+        Box<TypedStmt>,
+        TypedExpr,
+        Box<TypedStmt>,
+        Vec<TypedStmt>,
+        SourceSpan,
+    ),
     Return(Option<TypedExpr>, SourceSpan),
-    Call(Type, String, Vec<Type>, SourceSpan),
+    Call(Type, String, Vec<(Type, TypedExpr)>, SourceSpan),
     Err,
 }
 

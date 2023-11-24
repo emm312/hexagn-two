@@ -6,14 +6,14 @@ use inkwell::{
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType},
-    values::{FunctionValue, PointerValue, BasicMetadataValueEnum, BasicValueEnum},
+    values::{BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace, OptimizationLevel,
 };
 
 use crate::{
-    ast::{BuiltinType, FuncAttribute, Type, BinOp},
+    ast::{BinOp, BuiltinType, FuncAttribute, Type},
     func_mangling,
-    typed_ast::{TypedTopLvl, TypedExpr},
+    typed_ast::{TypedExpr, TypedStmt, TypedTopLvl},
 };
 
 pub struct Codegen<'ctx> {
@@ -22,7 +22,7 @@ pub struct Codegen<'ctx> {
     module: Module<'ctx>,
 
     cur_fn: Option<FunctionValue<'ctx>>,
-    vars: HashMap<String, PointerValue<'ctx>>,
+    vars: HashMap<String, (PointerValue<'ctx>, Type)>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -67,28 +67,35 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     fn compile_ast(&mut self, ast: Vec<TypedTopLvl>) {
-        let _ = ast.iter().map(|elem| match elem {
-            TypedTopLvl::FuncDef(attrs, typ, name, args, _, _span) => {
-                let mname = if attrs.contains(&FuncAttribute::NoMangle) {
-                    name.clone()
-                } else {
-                    func_mangling::mangle_function(&name, &args, &typ)
-                };
-                let args = args
-                    .iter()
-                    .map(|(t, _)| self.to_llvm_t(t))
-                    .collect::<Vec<_>>();
-                let fn_t = Self::as_fn_type(self.to_llvm_t(&typ), args);
-                self.module.add_function(&mname, fn_t, {
-                    if attrs.contains(&FuncAttribute::External) {
-                        Some(Linkage::External)
+        let _ = ast
+            .iter()
+            .map(|elem| match elem {
+                TypedTopLvl::FuncDef(attrs, typ, name, args, _, _span) => {
+                    let mname = if attrs.contains(&FuncAttribute::NoMangle) {
+                        name.clone()
                     } else {
-                        None
-                    }
-                });
-            }
-            _ => (),
-        }).collect::<Vec<()>>();
+                        func_mangling::mangle_function(
+                            &name,
+                            &args.into_iter().map(|(e, _)| e.clone()).collect::<Vec<_>>(),
+                            &typ,
+                        )
+                    };
+                    let args = args
+                        .iter()
+                        .map(|(t, _)| self.to_llvm_t(t))
+                        .collect::<Vec<_>>();
+                    let fn_t = Self::as_fn_type(self.to_llvm_t(&typ), args);
+                    self.module.add_function(&mname, fn_t, {
+                        if attrs.contains(&FuncAttribute::External) {
+                            Some(Linkage::External)
+                        } else {
+                            None
+                        }
+                    });
+                }
+                _ => (),
+            })
+            .collect::<Vec<()>>();
 
         for def in ast {
             match def {
@@ -96,14 +103,97 @@ impl<'ctx> Codegen<'ctx> {
                     let mname = if attrs.contains(&FuncAttribute::NoMangle) {
                         name.clone()
                     } else {
-                        func_mangling::mangle_function(&name, &args, &typ)
+                        func_mangling::mangle_function(
+                            &name,
+                            &args.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>(),
+                            &typ,
+                        )
                     };
                     let fn_t = self.module.get_function(&mname).unwrap();
                     self.cur_fn = Some(fn_t);
                     if body.len() > 0 {
-                        let entry = self.context.append_basic_block(fn_t, "entry");
-                        self.builder.position_at_end(entry);
+                        self.compile_stmts(body, args, typ, fn_t);
                     }
+                }
+                _ => todo!(),
+            }
+        }
+    }
+
+    fn compile_stmts(
+        &mut self,
+        stmts: Vec<TypedStmt>,
+        args: Vec<(Type, String)>,
+        _ret_t: Type,
+        fn_t: FunctionValue<'ctx>,
+    ) {
+        let allocas = self.context.append_basic_block(fn_t, "allocas");
+        self.builder.position_at_end(allocas);
+        for (t, name) in args {
+            let alloca = self
+                .builder
+                .build_alloca(BasicTypeEnum::try_from(self.to_llvm_t(&t)).unwrap(), &name)
+                .unwrap();
+            self.builder
+                .build_store(alloca, fn_t.get_nth_param(0).unwrap())
+                .unwrap();
+            self.vars.insert(name, (alloca, t));
+        }
+        let entry = self.context.append_basic_block(fn_t, "entry");
+        self.builder.build_unconditional_branch(entry).unwrap();
+        self.builder.position_at_end(entry);
+
+        for stmt in stmts {
+            match stmt {
+                TypedStmt::VarDecl(typ, name, expr, _) => {
+                    self.builder.position_at_end(allocas);
+                    let alloca = self
+                        .builder
+                        .build_alloca(
+                            BasicTypeEnum::try_from(self.to_llvm_t(&typ)).unwrap(),
+                            &name,
+                        )
+                        .unwrap();
+                    self.vars.insert(name, (alloca, typ));
+                    if let Some(expr) = expr {
+                        let expr_c = self.compile_expr(expr);
+                        self.builder.build_store(alloca, expr_c).unwrap();
+                    }
+                }
+                TypedStmt::Assign(name, expr, _) => {
+                    let expr_c = self.compile_expr(expr);
+                    let ptr = self.vars.get(&name).unwrap();
+                    self.builder.build_store(ptr.0, expr_c).unwrap();
+                }
+                TypedStmt::Call(ret_t, name, args, _) => {
+                    let fn_t = self.module.get_function(&name).unwrap_or_else(|| {
+                        self.module
+                            .get_function(&func_mangling::mangle_function(
+                                &name,
+                                &args.iter().map(|(a, _)| a.clone()).collect::<Vec<Type>>(),
+                                &ret_t,
+                            ))
+                            .unwrap()
+                    });
+                    let args = args
+                        .iter()
+                        .map(|(_, expr)| self.compile_expr(expr.clone()).try_into().unwrap())
+                        .collect::<Vec<_>>();
+
+                    self.builder
+                        .build_call(fn_t, &args, &name)
+                        .unwrap()
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap();
+                }
+                TypedStmt::Return(expr, _) => {
+                    let expr_c = if let Some(expr) = expr {
+                        self.compile_expr(expr)
+                    } else {
+                        BasicValueEnum::IntValue(self.context.i32_type().const_int(0, false))
+                    };
+                    self.builder.build_return(Some(&expr_c)).unwrap();
                 }
                 _ => todo!(),
             }
@@ -180,9 +270,290 @@ impl<'ctx> Codegen<'ctx> {
             TypedExpr::BinOp(lhs, op, rhs, _) => {
                 let lhs_c = self.compile_expr(*lhs);
                 let rhs_c = self.compile_expr(*rhs);
+                match op {
+                    BinOp::Add => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::FloatValue(
+                            self.builder
+                                .build_float_add(v, rhs_c.into_float_value(), "addtmp")
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_add(v, rhs_c.into_int_value(), "addtmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Sub => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::FloatValue(
+                            self.builder
+                                .build_float_sub(v, rhs_c.into_float_value(), "subtmp")
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_sub(v, rhs_c.into_int_value(), "subtmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Mul => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::FloatValue(
+                            self.builder
+                                .build_float_mul(v, rhs_c.into_float_value(), "multmp")
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_mul(v, rhs_c.into_int_value(), "multmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Div => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::FloatValue(
+                            self.builder
+                                .build_float_div(v, rhs_c.into_float_value(), "divtmp")
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_signed_div(v, rhs_c.into_int_value(), "divtmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Mod => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::FloatValue(
+                            self.builder
+                                .build_float_rem(v, rhs_c.into_float_value(), "modtmp")
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_signed_rem(v, rhs_c.into_int_value(), "modtmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Eq => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::OEQ,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "eqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::EQ,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "eqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Neq => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::ONE,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "neqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::NE,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "neqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Lt => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::OLT,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "lttmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SLT,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "lttmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Gt => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::OGT,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "gttmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SGT,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "gttmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Leq => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::OLE,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "leqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SLE,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "leqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Geq => match lhs_c {
+                        BasicValueEnum::FloatValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_float_compare(
+                                    inkwell::FloatPredicate::OGE,
+                                    v,
+                                    rhs_c.into_float_value(),
+                                    "geqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SGE,
+                                    v,
+                                    rhs_c.into_int_value(),
+                                    "geqtmp",
+                                )
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::And => match lhs_c {
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_and(v, rhs_c.into_int_value(), "andtmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                    BinOp::Or => match lhs_c {
+                        BasicValueEnum::IntValue(v) => BasicValueEnum::IntValue(
+                            self.builder
+                                .build_or(v, rhs_c.into_int_value(), "ortmp")
+                                .unwrap(),
+                        ),
+                        _ => todo!(),
+                    },
+                }
+            }
+            TypedExpr::Array(_exprs, _) => {
                 todo!()
             }
-            _ => todo!()
+            TypedExpr::Call(typ, name, args, _) => {
+                let fn_t = self.module.get_function(&name).unwrap_or_else(|| {
+                    self.module
+                        .get_function(&func_mangling::mangle_function(
+                            &name,
+                            &args.iter().map(|(a, _)| a.clone()).collect::<Vec<Type>>(),
+                            &typ,
+                        ))
+                        .unwrap()
+                });
+                let args = args
+                    .iter()
+                    .map(|(_, expr)| self.compile_expr(expr.clone()).try_into().unwrap())
+                    .collect::<Vec<_>>();
+
+                self.builder
+                    .build_call(fn_t, &args, &name)
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            TypedExpr::Float(val, _) => {
+                BasicValueEnum::FloatValue(self.context.f32_type().const_float(val as f64))
+            }
+            TypedExpr::Ident(name, _) => {
+                let ptr = self.vars.get(&name).unwrap();
+                self.builder
+                    .build_load(
+                        BasicTypeEnum::try_from(self.to_llvm_t(&ptr.1)).unwrap(),
+                        ptr.0,
+                        "load",
+                    )
+                    .unwrap()
+            }
+            TypedExpr::Int(val, _) => {
+                BasicValueEnum::IntValue(self.context.i32_type().const_int(val as u64, false))
+            }
+            TypedExpr::Index(name, expr, _) => {
+                let ptr = self.vars.get(&name).unwrap();
+                let idx = self.compile_expr(*expr);
+                let ptr_l = unsafe {
+                    self.builder.build_gep(
+                        BasicTypeEnum::try_from(self.to_llvm_t(&ptr.1)).unwrap(),
+                        ptr.0,
+                        &[idx.into_int_value()],
+                        "idx",
+                    )
+                }
+                .unwrap();
+                self.builder
+                    .build_load(
+                        BasicTypeEnum::try_from(self.to_llvm_t(&ptr.1)).unwrap(),
+                        ptr_l,
+                        "load",
+                    )
+                    .unwrap()
+            }
+            _ => todo!(),
         }
     }
 }

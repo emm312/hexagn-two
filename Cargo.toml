@@ -18,3 +18,8 @@ lalrpop = { version = "0.20.0", features = ["lexer"] }
 [features]
 default = ["llvm"]
 llvm = ["inkwell"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
