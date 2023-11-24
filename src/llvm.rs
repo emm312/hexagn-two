@@ -182,9 +182,6 @@ impl<'ctx> Codegen<'ctx> {
 
                     self.builder
                         .build_call(fn_t, &args, &name)
-                        .unwrap()
-                        .try_as_basic_value()
-                        .left()
                         .unwrap();
                 }
                 TypedStmt::Return(expr, _) => {
