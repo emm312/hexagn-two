@@ -140,12 +140,12 @@ impl<'ctx> Codegen<'ctx> {
             self.vars.insert(name, (alloca, t));
         }
         let entry = self.context.append_basic_block(fn_t, "entry");
-        self.builder.build_unconditional_branch(entry).unwrap();
         self.builder.position_at_end(entry);
 
         for stmt in stmts {
             match stmt {
                 TypedStmt::VarDecl(typ, name, expr, _) => {
+                    let return_to = self.builder.get_insert_block().unwrap();
                     self.builder.position_at_end(allocas);
                     let alloca = self
                         .builder
@@ -155,6 +155,7 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .unwrap();
                     self.vars.insert(name, (alloca, typ));
+                    self.builder.position_at_end(return_to);
                     if let Some(expr) = expr {
                         let expr_c = self.compile_expr(expr);
                         self.builder.build_store(alloca, expr_c).unwrap();
@@ -195,6 +196,8 @@ impl<'ctx> Codegen<'ctx> {
                 _ => todo!(),
             }
         }
+        self.builder.position_at_end(allocas);
+        self.builder.build_unconditional_branch(entry).unwrap();
     }
 
     fn as_fn_type(ret: AnyTypeEnum<'ctx>, args: Vec<AnyTypeEnum<'ctx>>) -> FunctionType<'ctx> {
