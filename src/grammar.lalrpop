@@ -1,7 +1,6 @@
 use crate::ast::*;
 use lalrpop_util::ParseError;
 
-
 grammar<'err>(file: usize, errors: &'err mut Vec<ParseError<usize, Token<'input>, &'static str>>);
 
 match {
